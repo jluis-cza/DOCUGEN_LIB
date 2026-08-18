@@ -1,0 +1,9 @@
+examples/
+tests/
+.git/
+.gitignore
+.npmignore
+*.md
+.env*
+coverage/
+.nyc_output/

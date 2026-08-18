@@ -1,0 +1,51 @@
+{
+  "name": "docugen-lib",
+  "version": "1.0.0-alpha.1",
+  "description": "Librería JavaScript para generación de documentos PDF con plantillas dinámicas. Motor de generación documental independiente y reutilizable.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./engine": "./src/core/DocugenEngine.js",
+    "./validators": "./src/validators/index.js",
+    "./resolvers": "./src/resolvers/index.js",
+    "./utils": "./src/utils/index.js"
+  },
+  "scripts": {
+    "test": "node --test tests/**/*.test.js",
+    "test:watch": "node --test --watch tests/**/*.test.js",
+    "example:basic": "node examples/basic.js",
+    "example:with-images": "node examples/with-images.js",
+    "lint": "eslint src/ --fix",
+    "docs": "echo 'Documentation available in README.md'"
+  },
+  "keywords": [
+    "pdf",
+    "template",
+    "document",
+    "generation",
+    "docugen",
+    "javascript",
+    "nodejs"
+  ],
+  "author": "jluis-cza",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jluis-cza/DOCUGEN_LIB.git"
+  },
+  "homepage": "https://github.com/jluis-cza/DOCUGEN_LIB",
+  "bugs": {
+    "url": "https://github.com/jluis-cza/DOCUGEN_LIB/issues"
+  },
+  "dependencies": {
+    "pdfkit": "^0.19.1",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "eslint": "^8.50.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
