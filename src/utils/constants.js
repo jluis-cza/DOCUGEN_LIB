@@ -59,8 +59,9 @@ export const TIMEOUT_CONFIG = {
 };
 
 export const IMAGE_CONFIG = {
-  MAX_SIZE: 10 * 1024 * 1024, // 10MB max
-  SUPPORTED_FORMATS: ['png', 'jpeg', 'jpg', 'webp', 'gif'],
+  MAX_SIZE: 2 * 1024 * 1024,
+  MAX_TEMPLATE_TOTAL_SIZE: 6 * 1024 * 1024,
+  SUPPORTED_FORMATS: ['png', 'jpeg'],
 };
 
 export const FONT_STYLES = {

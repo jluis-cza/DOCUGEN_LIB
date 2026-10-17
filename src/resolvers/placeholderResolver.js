@@ -50,10 +50,11 @@ export const extractPlaceholderKeys = (value) => {
  * @returns {string} - Texto resuelto
  */
 export const getElementText = (element, payload = {}) => {
-  const rawText = element.placeholderKey
-    ? resolveFieldValue(element.placeholderKey, payload, element.text || '')
-    : element.text || '';
-
+  const rawText = element?.text || '';
+  const directPlaceholder = `{{${element?.placeholderKey || ''}}}`;
+  if (element?.placeholderKey && rawText.trim() === directPlaceholder) {
+    return resolveFieldValue(element.placeholderKey, payload, rawText);
+  }
   return resolveTemplateString(rawText, payload);
 };
 

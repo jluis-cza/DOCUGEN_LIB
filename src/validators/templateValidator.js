@@ -3,8 +3,9 @@
  * Verifica que una plantilla tenga la estructura correcta
  */
 
-import { SCHEMA_VERSION, SUPPORTED_ELEMENT_TYPES, ERROR_CODES } from '../utils/constants.js';
+import { SCHEMA_VERSION, SUPPORTED_ELEMENT_TYPES, ERROR_CODES, IMAGE_CONFIG } from '../utils/constants.js';
 import { isValidTemplateStructure, getMissingKeys } from '../utils/helpers.js';
+import { decodeImageDataUri } from '../utils/images.js';
 
 /**
  * Valida que una plantilla tenga la estructura básica requerida
@@ -52,6 +53,10 @@ export const validateTemplateStructure = (template) => {
     errors.push('Template must have at least one element');
   } else {
     template.elements.forEach((element, index) => {
+      if (!element || typeof element !== 'object' || Array.isArray(element)) {
+        errors.push(`Element at index ${index} must be an object`);
+        return;
+      }
       if (!element.type) {
         errors.push(`Element at index ${index} is missing 'type' field`);
       } else if (!SUPPORTED_ELEMENT_TYPES.includes(element.type)) {
@@ -92,6 +97,10 @@ export const validateTemplateMetadata = (metadata = {}) => {
       errors.push('Metadata.dynamicParameters must be an array');
     } else {
       metadata.dynamicParameters.forEach((param, index) => {
+        if (!param || typeof param !== 'object' || Array.isArray(param)) {
+          errors.push(`Dynamic parameter at index ${index} must be an object`);
+          return;
+        }
         if (!param.key || typeof param.key !== 'string') {
           errors.push(`Dynamic parameter at index ${index} is missing 'key' field`);
         }
@@ -106,6 +115,55 @@ export const validateTemplateMetadata = (metadata = {}) => {
     valid: errors.length === 0,
     errors,
   };
+};
+
+const validateTemplateResources = (template) => {
+  const errors = [];
+  const resources = Array.isArray(template.metadata?.resources) ? template.metadata.resources : [];
+  const resourceIds = new Set();
+  let totalSize = 0;
+
+  resources.forEach((resource, index) => {
+    const image = decodeImageDataUri(resource?.dataUrl);
+    if (
+      !resource?.id ||
+      !/^[A-Za-z0-9_.-]+$/.test(resource.id) ||
+      resourceIds.has(resource.id) ||
+      !image ||
+      image.size === 0 ||
+      image.size > IMAGE_CONFIG.MAX_SIZE ||
+      resource.size !== image.size ||
+      resource.mimeType !== image.mimeType ||
+      !String(resource.name || '').trim() ||
+      String(resource.name).length > 120
+    ) {
+      errors.push(`Template image resource at index ${index} is invalid or exceeds the 2 MB limit`);
+      return;
+    }
+    resourceIds.add(resource.id);
+    totalSize += image.size;
+  });
+
+  if (totalSize > IMAGE_CONFIG.MAX_TEMPLATE_TOTAL_SIZE) {
+    errors.push('Template image resources exceed the 6 MB combined limit');
+  }
+
+  if (Array.isArray(template.elements)) {
+    template.elements.forEach((element, index) => {
+      if (element?.type !== 'image') return;
+      const resourceId = element.resourceId ||
+        (String(element.src || '').startsWith('resource:')
+          ? String(element.src).slice('resource:'.length)
+          : '');
+      if (element.imageMode === 'static' && (!resourceId || !resourceIds.has(resourceId))) {
+        errors.push(`Static image element at index ${index} must reference a valid template resource`);
+      } else if (resourceId && !resourceIds.has(resourceId)) {
+        errors.push(`Image element at index ${index} references an unknown resource: ${resourceId}`);
+      }
+    });
+  }
+
+  return errors;
 };
 
 /**
@@ -123,6 +181,10 @@ export const validateTemplate = (template, options = {}) => {
     errors.push(...structureValidation.errors);
   }
 
+  if (!template || typeof template !== 'object' || Array.isArray(template)) {
+    return { valid: false, errors };
+  }
+
   // Validar metadatos
   if (options.validateMetadata !== false) {
     const metadataValidation = validateTemplateMetadata(template.metadata);
@@ -130,6 +192,7 @@ export const validateTemplate = (template, options = {}) => {
       errors.push(...metadataValidation.errors);
     }
   }
+  errors.push(...validateTemplateResources(template));
 
   // Validar page config si existe
   if (template.page && typeof template.page !== 'object') {
@@ -139,6 +202,24 @@ export const validateTemplate = (template, options = {}) => {
   // Validar canvas config si existe
   if (template.canvas && typeof template.canvas !== 'object') {
     errors.push('Template canvas configuration must be an object');
+  }
+
+  if (template.page && typeof template.page === 'object') {
+    const margin = template.page.margin;
+    if (margin !== undefined && (!margin || typeof margin !== 'object' || Array.isArray(margin))) {
+      errors.push('Template page margins must be an object');
+    } else if (margin) {
+      const values = ['top', 'right', 'bottom', 'left'].map((side) => Number(margin[side] ?? 40));
+      if (values.some((value) => !Number.isFinite(value) || value < 0)) {
+        errors.push('Template page margins must be non-negative numbers');
+      } else if (
+        template.dimensions &&
+        (values[1] + values[3] >= template.dimensions.width ||
+          values[0] + values[2] >= template.dimensions.height)
+      ) {
+        errors.push('Template page margins must be smaller than page dimensions');
+      }
+    }
   }
 
   return {

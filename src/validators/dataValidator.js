@@ -1,157 +1,181 @@
 /**
- * Validador de datos dinámicos
- * Verifica que los datos proporcionados sean válidos para una plantilla
+ * Descubre y valida los datos dinámicos que requiere una plantilla.
  */
 
+import { decodeImageDataUri } from '../utils/images.js';
+import { normalizePlaceholderKey } from '../utils/helpers.js';
+import { IMAGE_CONFIG } from '../utils/constants.js';
 import { extractPlaceholderKeys } from '../resolvers/placeholderResolver.js';
-import { getMissingKeys } from '../utils/helpers.js';
 
-/**
- * Extrae todas las claves de parámetros requeridos de una plantilla
- * @param {object} template - Plantilla
- * @returns {object[]} - Array de parámetros { key, label, required, type, ... }
- */
+const inferParameterType = (element, field) => {
+  if (field === 'text' && element?.type === 'checkbox') return 'text';
+  if (field === 'src' && element?.type === 'image') return 'image';
+  if (field === 'qrValue' && element?.type === 'qr') return 'qr';
+  if (element?.type === 'checkbox') return 'boolean';
+  if (element?.type === 'date') return 'date';
+  if (element?.type === 'image') return 'image';
+  if (element?.type === 'qr') return 'qr';
+  if (['paragraph', 'list', 'footer'].includes(element?.type)) return 'textarea';
+  return 'text';
+};
+
+const addParameter = (map, key, parameter) => {
+  const normalizedKey = normalizePlaceholderKey(key);
+  if (!normalizedKey || normalizedKey === 'page_number') return;
+  map.set(normalizedKey, { key: normalizedKey, ...parameter });
+};
+
 export const extractTemplateParameters = (template = {}) => {
   const map = new Map();
-
-  // Parámetros explícitos en metadatos
   const metadataParams = Array.isArray(template?.metadata?.dynamicParameters)
     ? template.metadata.dynamicParameters
     : [];
 
   metadataParams.forEach((param) => {
-    const key = String(param?.key || param?.name || '').trim();
-    if (!key) return;
-
-    map.set(key, {
-      key,
+    const key = normalizePlaceholderKey(param?.key || param?.name || '');
+    if (!key || key === 'page_number') return;
+    addParameter(map, key, {
       label: param?.label || key,
       description: param?.description || '',
       required: Boolean(param?.required),
-      type: param?.type || 'text',
+      type: param?.type || inferParameterType({ type: param?.elementType }),
       example: param?.example || '',
       allowedValues: Array.isArray(param?.allowedValues) ? param.allowedValues : undefined,
       source: 'metadata',
     });
   });
 
-  // Parámetros implícitos en elementos
   const elements = Array.isArray(template?.elements) ? template.elements : [];
   elements.forEach((element) => {
-    // Placeholders explícitos
-    if (element?.placeholderKey) {
-      const key = String(element.placeholderKey).trim();
-      if (key && !map.has(key)) {
-        map.set(key, {
-          key,
-          label: key,
-          description: `Used in ${element?.type || 'element'}`,
+    if (!element || element.type === 'pageNumber') return;
+    const explicitKey = normalizePlaceholderKey(element.placeholderKey);
+    if (explicitKey) {
+      if (element.type === 'image' && map.has(explicitKey)) {
+        map.get(explicitKey).type = 'image';
+      } else if (!map.has(explicitKey)) {
+        addParameter(map, explicitKey, {
+          label: explicitKey,
+          description: `Used in ${element.type || 'element'}`,
           required: true,
-          type: element?.type === 'checkbox' ? 'boolean' : 'text',
+          type: inferParameterType(element),
           example: '',
           source: 'placeholder',
         });
       }
     }
 
-    // Placeholders en texto ({{key}})
-    const textContent = [element?.text || '', element?.qrValue || '', element?.src || ''].join(' ');
-    const placeholderKeys = extractPlaceholderKeys(textContent);
-
-    placeholderKeys.forEach((key) => {
-      if (key && !map.has(key)) {
-        map.set(key, {
-          key,
-          label: key,
-          description: `Used in ${element?.type || 'element'}`,
+    ['text', 'qrValue', 'src'].forEach((field) => {
+      extractPlaceholderKeys(String(element[field] || '')).forEach((key) => {
+        const normalizedKey = normalizePlaceholderKey(key);
+        if (!normalizedKey || normalizedKey === 'page_number') return;
+        if (field === 'src' && element.type === 'image' && map.has(normalizedKey)) {
+          map.get(normalizedKey).type = 'image';
+          return;
+        }
+        if (map.has(normalizedKey)) return;
+        addParameter(map, normalizedKey, {
+          label: normalizedKey,
+          description: `Used in ${element.type || 'element'}`,
           required: true,
-          type: element?.type === 'checkbox' ? 'boolean' : 'text',
+          type: inferParameterType(element, field),
           example: '',
           source: 'template-string',
         });
-      }
+      });
     });
   });
 
-  return Array.from(map.values()).sort((a, b) => a.key.localeCompare(b.key));
+  return Array.from(map.values()).sort((left, right) => left.key.localeCompare(right.key));
 };
 
-/**
- * Valida que los datos proporcionados satisfagan los requisitos de la plantilla
- * @param {object} template - Plantilla
- * @param {object} data - Datos a validar
- * @returns {object} - { valid: boolean, errors: string[], missing: string[] }
- */
+const isHttpUrl = (value) => {
+  try {
+    return ['http:', 'https:'].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+};
+
+const validateParameterValue = (parameter, value) => {
+  const text = String(value).trim();
+  if (Array.isArray(parameter.allowedValues) && parameter.allowedValues.length > 0 &&
+      !parameter.allowedValues.includes(text)) {
+    return `Parameter '${parameter.key}' must be one of: ${parameter.allowedValues.join(', ')}`;
+  }
+
+  let valid = true;
+  switch (parameter.type) {
+    case 'number':
+      valid = Number.isFinite(Number(text));
+      break;
+    case 'date':
+      valid = !Number.isNaN(new Date(text).getTime());
+      break;
+    case 'boolean':
+      valid = typeof value === 'boolean' ||
+        ['true', 'false', '1', '0', 'yes', 'no'].includes(text.toLowerCase());
+      break;
+    case 'email':
+      valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
+      break;
+    case 'url':
+      try {
+        new URL(text);
+      } catch {
+        valid = false;
+      }
+      break;
+    case 'image': {
+      const image = decodeImageDataUri(text);
+      valid = isHttpUrl(text) || Boolean(image && image.size > 0 && image.size <= IMAGE_CONFIG.MAX_SIZE);
+      break;
+    }
+    case 'qr':
+      valid = text.length >= 3;
+      break;
+    case 'textarea':
+      valid = text.length <= 4000;
+      break;
+    default:
+      break;
+  }
+
+  return valid ? null : `Parameter '${parameter.key}' has an invalid ${parameter.type} value`;
+};
+
 export const validateDataAgainstTemplate = (template, data = {}) => {
   const errors = [];
   const missing = [];
 
-  if (!template || typeof template !== 'object') {
+  if (!template || typeof template !== 'object' || Array.isArray(template)) {
     errors.push('Template must be provided');
     return { valid: false, errors, missing };
   }
-
-  if (!data || typeof data !== 'object') {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
     errors.push('Data must be an object');
     return { valid: false, errors, missing };
   }
 
-  const parameters = extractTemplateParameters(template);
-  const requiredParams = parameters.filter((p) => p.required);
-
-  // Verificar que todas las claves requeridas estén presentes
-  requiredParams.forEach((param) => {
-    const value = data[param.key];
-
-    if (value === undefined || value === null) {
-      missing.push(param.key);
-      errors.push(`Missing required parameter: ${param.key}`);
+  extractTemplateParameters(template).forEach((parameter) => {
+    const value = data[parameter.key];
+    const empty = value === undefined || value === null || String(value).trim() === '';
+    if (empty) {
+      if (parameter.required) {
+        missing.push(parameter.key);
+        errors.push(`Missing required parameter: ${parameter.key}`);
+      }
       return;
     }
-
-    // Validar tipo si es checkbox
-    if (param.type === 'boolean' && typeof value !== 'boolean') {
-      errors.push(`Parameter '${param.key}' must be a boolean`);
-    }
-
-    // Validar valores permitidos si existen
-    if (param.allowedValues && !param.allowedValues.includes(value)) {
-      errors.push(
-        `Parameter '${param.key}' must be one of: ${param.allowedValues.join(', ')}`
-      );
-    }
-
-    // Validar que no sea vacío (string)
-    if (typeof value === 'string' && value.trim() === '') {
-      missing.push(param.key);
-      errors.push(`Parameter '${param.key}' cannot be empty`);
-    }
+    const error = validateParameterValue(parameter, value);
+    if (error) errors.push(error);
   });
 
-  return {
-    valid: errors.length === 0,
-    errors,
-    missing,
-  };
+  return { valid: errors.length === 0, errors, missing };
 };
 
-/**
- * Realiza una validación rápida de datos
- * @param {object} template - Plantilla
- * @param {object} data - Datos a validar
- * @returns {boolean} - true si los datos son válidos
- */
-export const isValidData = (template, data) => {
-  const result = validateDataAgainstTemplate(template, data);
-  return result.valid;
-};
+export const isValidData = (template, data) =>
+  validateDataAgainstTemplate(template, data).valid;
 
-/**
- * Obtiene un resumen de validación
- * @param {object} template - Plantilla
- * @param {object} data - Datos a validar
- * @returns {object} - Resumen detallado de validación
- */
 export const getValidationSummary = (template, data) => {
   const parameters = extractTemplateParameters(template);
   const dataValidation = validateDataAgainstTemplate(template, data);
@@ -160,8 +184,8 @@ export const getValidationSummary = (template, data) => {
     templateInfo: {
       name: template?.name,
       totalParameters: parameters.length,
-      requiredParameters: parameters.filter((p) => p.required).length,
-      optionalParameters: parameters.filter((p) => !p.required).length,
+      requiredParameters: parameters.filter((parameter) => parameter.required).length,
+      optionalParameters: parameters.filter((parameter) => !parameter.required).length,
     },
     parameters,
     dataValidation,

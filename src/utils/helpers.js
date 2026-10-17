@@ -51,7 +51,7 @@ export const isValidUrl = (url) => {
  */
 export const isDataUri = (dataUri) => {
   if (!dataUri || typeof dataUri !== 'string') return false;
-  return /^data:image\/(png|jpeg|jpg|webp|gif);base64,/.test(dataUri);
+  return /^data:image\/(png|jpeg);base64,/i.test(dataUri);
 };
 
 /**

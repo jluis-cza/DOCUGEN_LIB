@@ -27,8 +27,10 @@ Librería JavaScript para generación de documentos PDF con plantillas dinámica
 
 ✅ **17 tipos de elementos** - Texto, imágenes, QR, tablas, firmas, y más  
 ✅ **Placeholders dinámicos** - Reemplaza `{{variable}}` con datos en tiempo real  
-✅ **Validación completa** - Valida plantillas y datos antes de generar  
-✅ **Recursos externos** - Carga imágenes de URLs, Data URIs o archivos locales  
+✅ **Validación tipada** - Revisa parámetros requeridos, formatos y valores permitidos
+✅ **Recursos de imagen** - Usa recursos estáticos del template, Data URIs, URLs y rutas locales
+✅ **Diseño actualizado** - Fuentes, estilos inline, rotación, opacidad y altura automática
+✅ **Paginación** - Distribuye texto largo y genera números de página automáticamente
 ✅ **Parámetros extraíbles** - Descubre automáticamente qué datos necesita tu plantilla  
 ✅ **Sin dependencias de BD** - Funciona en cualquier entorno Node.js  
 ✅ **Agnóstico de framework** - Úsalo con Express, Fastify, Lambda, etc.  
@@ -130,10 +132,12 @@ await fs.writeFile('./invoice.pdf', pdfBuffer);
 
 Una plantilla define la estructura visual de un documento. Incluye:
 
-- **Dimensiones**: Ancho y alto de la página
+- **Dimensiones**: Ancho y alto en píxeles CSS (`unit: "px"`); se convierten a puntos PDF con escala 72/96
 - **Configuración de página**: Color de fondo, márgenes
 - **Elementos**: Componentes visuales (texto, imágenes, etc.)
-- **Metadatos**: Información de la plantilla y parámetros dinámicos
+- **Metadatos**: Parámetros dinámicos y recursos de imagen estáticos
+
+Las coordenadas y los márgenes también se expresan en píxeles CSS. El motor admite páginas de tamaño personalizado y crea páginas adicionales cuando el texto fluye fuera de la página.
 
 ### Parámetros Dinámicos
 
@@ -174,6 +178,57 @@ Componentes visuales que componen el documento:
 | `footer` | Pie de página | Información final |
 | `date` | Fecha actual | Timestamps |
 | `pageNumber` | Número de página | Paginación |
+
+#### Propiedades visuales y texto enriquecido
+
+Los elementos admiten `fontFamily` (`Arial`, `Times New Roman`, `Courier New`, `Roboto`, `Lato`, `Montserrat` u `Open Sans`), `fontWeight` (400, 600 o 700), `italic`, `underline`, `lineSpacing`, `align`, `rotation` y `opacity`. Títulos y subtítulos son negrita por defecto. El texto puede incluir estilos inline anidados:
+
+```json
+{
+  "type": "paragraph",
+  "x": 40,
+  "y": 120,
+  "width": 650,
+  "height": 40,
+  "autoHeight": true,
+  "fontFamily": "Roboto",
+  "fontWeight": 400,
+  "text": "Hola <bold>{{client_name}}</bold>, <italic>gracias</italic>."
+}
+```
+
+Las etiquetas admitidas son `<bold>`, `<semibold>`, `<italic>` y `<underlined>`; los valores dentro de ellas también resuelven placeholders. `autoHeight: false` respeta el alto definido y recorta texto que no cabe. Las líneas con `align: "justify"` se justifican salvo la última línea del párrafo.
+
+#### Imágenes estáticas dentro de una plantilla
+
+Los recursos estáticos se guardan en `metadata.resources` y se vinculan desde los elementos `image`. Cada recurso admite PNG/JPEG válido, hasta 2 MB individualmente y 6 MB en total por plantilla:
+
+```json
+{
+  "metadata": {
+    "resources": [{
+      "id": "company-logo",
+      "name": "logo.png",
+      "mimeType": "image/png",
+      "size": 68,
+      "dataUrl": "data:image/png;base64,..."
+    }]
+  },
+  "elements": [{
+    "id": "logo",
+    "type": "image",
+    "imageMode": "static",
+    "resourceId": "company-logo",
+    "src": "resource:company-logo",
+    "x": 40,
+    "y": 20,
+    "width": 120,
+    "height": 60
+  }]
+}
+```
+
+`size` debe coincidir con el tamaño real decodificado del Data URI y `mimeType` con su formato.
 
 ---
 
@@ -254,6 +309,8 @@ const pdfBuffer = await docugen.generatePDF({
 
 // pdfBuffer es un Buffer que puedes guardar, enviar, etc.
 ```
+
+La plantilla puede pasarse como ID previamente registrado o como objeto directamente. La validación de datos está activada por defecto. `new DocugenEngine({ timeout })` configura el tiempo límite (ms) para cargar recursos remotos durante el renderizado.
 
 #### generatePDFWithMetadata(options)
 
@@ -472,22 +529,23 @@ O Data URI:
 
 Los placeholders se resuelven automáticamente en orden:
 
-1. **Placeholder directo** - `element.placeholderKey`
-2. **Template string** - `{{key}}` en `element.text`, `element.qrValue`, `element.src`
+1. **Texto, QR e imagen**: los placeholders `{{key}}` en `text`, `qrValue` o `src` se sustituyen desde `data`.
+2. **`placeholderKey` en texto**: determina el parámetro que se valida; cuando `text` contiene únicamente `{{placeholderKey}}`, su valor directo también se resuelve. Si el texto tiene otras palabras o claves, se sustituyen sus propios placeholders.
+3. **`placeholderKey` en checkbox**: usa el valor dinámico para marcar/desmarcar. `true`, `"true"`, `"1"` y `"yes"` se consideran marcados.
 
 ```javascript
-// En la plantilla
 {
   "type": "text",
-  "placeholderKey": "client_name",  // Prioridad 1
-  "text": "Client: {{fallback}}"     // Prioridad 2
+  "placeholderKey": "client_name",
+  "text": "Client: {{client_name}}"
 }
 
-// Con estos datos
-{ client_name: "ACME", fallback: "Unknown" }
-
-// Resultado: "Client: ACME"
+// data: { client_name: "ACME" } -> "Client: ACME"
 ```
+
+Las claves de datos son planas; la notación `{{customer.name}}` busca la clave literal `"customer.name"`, no recorre objetos anidados. Los placeholders sin valor se sustituyen por una cadena vacía.
+
+Los elementos `pageNumber` son valores generados: se omiten al extraer parámetros y el motor inyecta `page_number` (comenzando en 1) al renderizar cada página. No es necesario incluir esa clave en `data`.
 
 ---
 
@@ -509,6 +567,8 @@ const validation = docugen.validateData('invoice', {});
 // }
 ```
 
+Se infieren tipos a partir de la metadata y del elemento que usa el valor: `text`, `textarea` (máximo 4000 caracteres), `number`, `date`, `boolean`, `email`, `url`, `image` y `qr`. Los parámetros opcionales vacíos se omiten en la validación; los obligatorios vacíos se reportan en `missing`. `allowedValues` limita el valor recibido.
+
 ### Desactivar Validación
 
 Si necesitas saltarte la validación:
@@ -529,10 +589,14 @@ await docugen.generatePDF({
 R: No directamente. Usa datos planos: `{ "user_first_name": "Juan" }` en lugar de `{ "user": { "firstName": "Juan" } }`
 
 **P: ¿Qué formatos de imagen soporta?**  
-R: PNG, JPEG, JPG, WebP, GIF (embebidos o URLs)
+R: PNG y JPEG/JPG. Data URIs y recursos estáticos se validan contra el formato y contenido; las imágenes remotas se descargan con un límite de tamaño.
 
 **P: ¿Hay límite de tamaño de imagen?**  
-R: Sí, máximo 10MB por imagen (configurable)
+R: Sí, 2 MB por imagen y 6 MB combinados para recursos estáticos de una plantilla.
+
+**P: ¿Cómo se numeran las páginas?**
+
+R: Añade un elemento `pageNumber` con `text: "Página {{page_number}}"`. La librería lo renderiza automáticamente en cada página, una vez calculada la paginación.
 
 **P: ¿Funciona en el navegador?**  
 R: No en este momento. La librería está optimizada para Node.js
@@ -549,7 +613,7 @@ try {
 ```
 
 **P: ¿Puedo usar fuentes personalizadas?**  
-R: Soporta Helvetica por defecto. Fuentes personalizadas en roadmap.
+R: Además de las fuentes PDF integradas Arial, Times New Roman y Courier New, se incluyen Roboto, Lato, Montserrat y Open Sans.
 
 ---
 

@@ -38,7 +38,7 @@ export class DocugenEngine {
   /**
    * Inicializa el motor de generación
    * @param {object} options - Opciones de configuración
-   * @param {number} options.timeout - Timeout para operaciones asincrónicas (ms)
+   * @param {number} options.timeout - Timeout para cargar recursos remotos (ms)
    */
   constructor(options = {}) {
     this.templates = new Map();
@@ -276,6 +276,7 @@ export class DocugenEngine {
     return generatePdfBuffer({
       template: templateObj,
       data,
+      timeout: this.timeout,
     });
   }
 
@@ -320,6 +321,7 @@ export class DocugenEngine {
     return generatePdf({
       template: templateObj,
       data,
+      timeout: this.timeout,
     });
   }
 
