@@ -137,7 +137,7 @@ const validateParameterValue = (parameter, value) => {
       valid = text.length <= 4000;
       break;
     default:
-      break;
+      valid = text.length <= 1200;
   }
 
   return valid ? null : `Parameter '${parameter.key}' has an invalid ${parameter.type} value`;

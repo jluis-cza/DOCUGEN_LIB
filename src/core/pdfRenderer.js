@@ -82,9 +82,9 @@ const BUILTIN_FONTS = {
 
 const getElementFont = (element, defaultBold = false, run = {}) => {
   const configuredWeight =
-    element?.fontWeight === 'bold'
+    String(element?.fontWeight).toLowerCase() === 'bold'
       ? 700
-      : element?.fontWeight === 'normal'
+      : String(element?.fontWeight).toLowerCase() === 'normal'
         ? 400
         : Number(element?.fontWeight);
   const weight = run.bold
@@ -374,12 +374,15 @@ const drawElement = async (doc, element, payload, resources, resourceOptions) =>
   }
 };
 
-export const generatePdfBuffer = async ({ template, data = {}, timeout } = {}) => {
+export const generatePdfBuffer = async ({ template, data = {}, metadata = {}, timeout } = {}) => {
   if (!template || typeof template !== 'object' || Array.isArray(template)) {
     throw new Error('Template is required and must be an object');
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Data must be an object');
+  }
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new Error('Metadata must be an object');
   }
 
   const pageWidth = Number(template.dimensions?.width || DEFAULT_PAGE_DIMENSIONS.width);
@@ -396,6 +399,13 @@ export const generatePdfBuffer = async ({ template, data = {}, timeout } = {}) =
     },
     bufferPages: true,
   });
+  document.info = {
+    ...document.info,
+    Title: String(metadata.documentName || template.name || 'Documento').slice(0, 256),
+    Author: String(metadata.author || '').slice(0, 256),
+    Creator: 'DOCUGEN',
+    Subject: String(metadata.status || 'Documento generado').slice(0, 256),
+  };
   document.scale(PDF_POINTS_PER_PIXEL);
 
   const drawPageBackground = () => {
@@ -458,8 +468,8 @@ export const generatePdfBuffer = async ({ template, data = {}, timeout } = {}) =
   });
 };
 
-export const generatePdf = async ({ template, data = {}, timeout } = {}) => {
-  const buffer = await generatePdfBuffer({ template, data, timeout });
+export const generatePdf = async ({ template, data = {}, metadata = {}, timeout } = {}) => {
+  const buffer = await generatePdfBuffer({ template, data, metadata, timeout });
   return {
     buffer,
     metadata: {

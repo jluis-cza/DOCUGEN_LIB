@@ -164,3 +164,96 @@ test('reads local resources in ESM and reports invalid image data', async () => 
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('embeds backend-compatible PDF metadata and accepts named font weights', async () => {
+  const engine = new DocugenEngine();
+  const template = {
+    name: 'Metadata fixture',
+    dimensions: { width: 300, height: 300 },
+    elements: [{
+      id: 'title',
+      type: 'title',
+      x: 10,
+      y: 10,
+      width: 200,
+      height: 30,
+      text: 'Title',
+      fontWeight: 'normal',
+    }, {
+      id: 'bold',
+      type: 'text',
+      x: 10,
+      y: 50,
+      width: 200,
+      height: 30,
+      text: 'Bold',
+      fontWeight: 'bold',
+    }],
+  };
+  const pdf = await engine.generatePDF({
+    template,
+    metadata: {
+      documentName: 'Generated title',
+      author: 'Verified author',
+      status: 'Approved',
+    },
+  });
+  const source = pdf.toString('latin1');
+
+  assert.match(source, /\(Generated title\)/);
+  assert.match(source, /\(Verified author\)/);
+  assert.match(source, /\(DOCUGEN\)/);
+  assert.match(source, /\(Approved\)/);
+  assert.match(source, /\/BaseFont \/Helvetica\b/);
+  assert.match(source, /\/BaseFont \/Helvetica-Bold\b/);
+});
+
+test('generates batches with per-record metadata and partial failures', async () => {
+  const engine = new DocugenEngine();
+  const template = {
+    name: 'Batch fixture',
+    dimensions: { width: 300, height: 300 },
+    elements: [{
+      id: 'name',
+      type: 'text',
+      x: 10,
+      y: 10,
+      width: 200,
+      height: 30,
+      text: '{{name}}',
+    }],
+  };
+
+  const batch = await engine.generatePDFs({
+    template,
+    metadata: { documentName: 'Default title' },
+    documents: [
+      { id: 'first', data: { name: 'Ada' } },
+      {
+        id: 'second',
+        data: { name: 'Grace' },
+        metadata: { documentName: 'Specific title' },
+      },
+      { id: 'invalid-metadata', data: {}, metadata: [] },
+      null,
+    ],
+  });
+
+  assert.equal(batch.total, 4);
+  assert.equal(batch.succeeded, 2);
+  assert.equal(batch.failed, 2);
+  assert.equal(batch.results[0].success, true);
+  assert.ok(batch.results[0].buffer.subarray(0, 5).toString('ascii') === '%PDF-');
+  assert.equal(batch.results[0].metadata.templateName, 'Batch fixture');
+  assert.match(batch.results[0].buffer.toString('latin1'), /\(Default title\)/);
+  assert.equal(batch.results[1].success, true);
+  assert.match(batch.results[1].buffer.toString('latin1'), /\(Specific title\)/);
+  assert.equal(batch.results[2].success, false);
+  assert.match(batch.results[2].error, /metadata must be an object/);
+  assert.equal(batch.results[3].success, false);
+  assert.match(batch.results[3].error, /Each document must be an object/);
+  await assert.rejects(
+    engine.generatePDFs({ template, documents: Array.from({ length: 101 }, () => ({})) }),
+    /more than 100 documents/
+  );
+});

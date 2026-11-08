@@ -70,6 +70,29 @@ test('Template Validator - Rechaza plantilla sin elementos', () => {
   assert(result.errors.some((e) => e.includes('at least one element')));
 });
 
+test('Template Validator - Aplica los límites de dimensiones y márgenes del backend', () => {
+  const template = {
+    name: 'Page limits',
+    dimensions: { width: 794, height: 1123 },
+    page: { margin: { top: 40, right: 40, bottom: 40, left: 40 } },
+    elements: [{ id: 'title', type: 'title', x: 0, y: 0, text: 'Title' }],
+  };
+
+  assert.equal(validateTemplate(template).valid, true);
+  assert.equal(
+    validateTemplate({ ...template, dimensions: { ...template.dimensions, width: 99 } }).valid,
+    false
+  );
+  assert.equal(
+    validateTemplate({ ...template, dimensions: { ...template.dimensions, height: 5001 } }).valid,
+    false
+  );
+  assert.equal(
+    validateTemplate({ ...template, page: { margin: { ...template.page.margin, left: 1.5 } } }).valid,
+    false
+  );
+});
+
 test('Template Validator - Rechaza tipo de elemento no soportado', () => {
   const invalidTemplate = {
     name: 'Test',
@@ -175,6 +198,24 @@ test('Data Validator - Rechaza datos incompletos', () => {
 
   assert.strictEqual(validation.valid, false);
   assert(validation.missing.includes('invoice_number'));
+});
+
+test('Data Validator - Applies backend text and textarea length limits', () => {
+  const textTemplate = {
+    name: 'Text limits',
+    dimensions: { width: 300, height: 300 },
+    elements: [{ id: 'text', type: 'text', x: 0, y: 0, text: '{{value}}' }],
+  };
+  const textareaTemplate = {
+    name: 'Textarea limits',
+    dimensions: { width: 300, height: 300 },
+    elements: [{ id: 'text', type: 'paragraph', x: 0, y: 0, text: '{{value}}' }],
+  };
+
+  assert.equal(validateDataAgainstTemplate(textTemplate, { value: 'a'.repeat(1200) }).valid, true);
+  assert.equal(validateDataAgainstTemplate(textTemplate, { value: 'a'.repeat(1201) }).valid, false);
+  assert.equal(validateDataAgainstTemplate(textareaTemplate, { value: 'a'.repeat(4000) }).valid, true);
+  assert.equal(validateDataAgainstTemplate(textareaTemplate, { value: 'a'.repeat(4001) }).valid, false);
 });
 
 // ============================================

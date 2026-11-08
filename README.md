@@ -304,6 +304,11 @@ Genera un PDF y retorna un Buffer.
 const pdfBuffer = await docugen.generatePDF({
   template: 'invoice_v1',      // ID o plantilla directa
   data: { ... },                // Datos dinámicos
+  metadata: {                   // Opcional: metadatos embebidos en el PDF
+    documentName: 'Factura',
+    author: 'Sistema integrador',
+    status: 'Emitida'
+  },
   validate: true                // Validar antes de generar (default: true)
 });
 
@@ -311,6 +316,8 @@ const pdfBuffer = await docugen.generatePDF({
 ```
 
 La plantilla puede pasarse como ID previamente registrado o como objeto directamente. La validación de datos está activada por defecto. `new DocugenEngine({ timeout })` configura el tiempo límite (ms) para cargar recursos remotos durante el renderizado.
+
+Los valores `documentName`, `author` y `status` se guardan en los metadatos PDF como título, autor y asunto; el creador se fija como `DOCUGEN`. La biblioteca no puede verificar la identidad del autor, por lo que la aplicación integradora debe suministrar un valor confiable si lo requiere. Los pesos `fontWeight: "normal"` y `fontWeight: "bold"` también se aceptan además de los valores numéricos.
 
 #### generatePDFWithMetadata(options)
 
@@ -332,6 +339,35 @@ const result = await docugen.generatePDFWithMetadata({
 //   }
 // }
 ```
+
+#### generatePDFs(options)
+
+Genera hasta 100 documentos en un mismo lote. Los fallos de validación o renderizado se reportan por elemento sin cancelar el resto. Los metadatos del registro sustituyen a los metadatos predeterminados del lote:
+
+```javascript
+const batch = await docugen.generatePDFs({
+  template: 'invoice_v1',
+  metadata: { documentName: 'Invoice' },
+  documents: [
+    { id: 'order-1', data: { client_name: 'ACME' } },
+    {
+      id: 'order-2',
+      data: { client_name: 'Example' },
+      metadata: { documentName: 'Special invoice', status: 'Draft' }
+    }
+  ]
+});
+
+for (const result of batch.results) {
+  if (result.success) {
+    await fs.writeFile(`./${result.id}.pdf`, result.buffer);
+  } else {
+    console.error(`Record ${result.index} failed:`, result.error);
+  }
+}
+```
+
+El resultado incluye `total`, `succeeded`, `failed`, `generatedAt` y `results`. Cada registro exitoso contiene su `buffer` y los metadatos de generación; cada fallo contiene el índice, el ID si fue proporcionado y el mensaje de error. `documents` debe ser un arreglo no vacío de máximo 100 registros.
 
 ---
 
@@ -567,7 +603,7 @@ const validation = docugen.validateData('invoice', {});
 // }
 ```
 
-Se infieren tipos a partir de la metadata y del elemento que usa el valor: `text`, `textarea` (máximo 4000 caracteres), `number`, `date`, `boolean`, `email`, `url`, `image` y `qr`. Los parámetros opcionales vacíos se omiten en la validación; los obligatorios vacíos se reportan en `missing`. `allowedValues` limita el valor recibido.
+Se infieren tipos a partir de la metadata y del elemento que usa el valor: `text` (máximo 1200 caracteres), `textarea` (máximo 4000 caracteres), `number`, `date`, `boolean`, `email`, `url`, `image` y `qr`. Los parámetros opcionales vacíos se omiten en la validación; los obligatorios vacíos se reportan en `missing`. `allowedValues` limita el valor recibido. Las dimensiones de página deben ser enteros entre 100 y 5000 píxeles, y los márgenes enteros no negativos que quepan dentro de la página.
 
 ### Desactivar Validación
 

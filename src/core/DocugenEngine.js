@@ -8,6 +8,17 @@ import { validateTemplate, isValidTemplate } from '../validators/templateValidat
 import { validateDataAgainstTemplate, extractTemplateParameters, getValidationSummary } from '../validators/dataValidator.js';
 import { generateUniqueId } from '../utils/helpers.js';
 
+const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const resolveTemplate = (engine, template) => {
+  if (typeof template === 'string') return engine.getTemplate(template);
+  if (isRecord(template)) {
+    if (!isValidTemplate(template)) throw new Error('Invalid template object provided');
+    return template;
+  }
+  throw new Error('Template must be a registered template ID or a template object');
+};
+
 /**
  * Motor de generación de documentos PDF con plantillas dinámicas
  *
@@ -226,6 +237,7 @@ export class DocugenEngine {
    * @param {object} options - Opciones de generación
    * @param {string} options.template - ID de plantilla registrada O objeto plantilla directamente
    * @param {object} options.data - Datos dinámicos (default: {})
+   * @param {object} options.metadata - Metadatos PDF opcionales: documentName, author y status
    * @param {boolean} options.validate - Validar datos antes de generar (default: true)
    * @returns {Promise<Buffer>} - Buffer del PDF generado
    * @throws {Error} - Si la plantilla no existe o los datos son inválidos
@@ -248,21 +260,9 @@ export class DocugenEngine {
    *   res.send(pdf);
    * });
    */
-  async generatePDF({ template, data = {}, validate = true } = {}) {
-    let templateObj;
-
-    // Resolver si es ID o directamente un objeto
-    if (typeof template === 'string') {
-      templateObj = this.getTemplate(template);
-    } else if (typeof template === 'object' && template !== null) {
-      // Validar plantilla directa
-      if (!isValidTemplate(template)) {
-        throw new Error('Invalid template object provided');
-      }
-      templateObj = template;
-    } else {
-      throw new Error('Template must be a registered template ID or a template object');
-    }
+  async generatePDF({ template, data = {}, metadata = {}, validate = true } = {}) {
+    const templateObj = resolveTemplate(this, template);
+    if (!isRecord(metadata)) throw new Error('Metadata must be an object');
 
     // Validar datos si está habilitado
     if (validate) {
@@ -276,6 +276,7 @@ export class DocugenEngine {
     return generatePdfBuffer({
       template: templateObj,
       data,
+      metadata,
       timeout: this.timeout,
     });
   }
@@ -285,6 +286,7 @@ export class DocugenEngine {
    * Útil cuando necesitas información sobre el documento generado
    *
    * @param {object} options - Opciones de generación (mismo que generatePDF)
+   * @param {object} options.metadata - Metadatos PDF opcionales: documentName, author y status
    * @returns {Promise<object>} - { buffer: Buffer, metadata: object }
    * @throws {Error} - Si la plantilla no existe o los datos son inválidos
    *
@@ -297,19 +299,9 @@ export class DocugenEngine {
    * console.log(result.metadata.elementCount); // Número de elementos
    * fs.writeFileSync('invoice.pdf', result.buffer);
    */
-  async generatePDFWithMetadata({ template, data = {}, validate = true } = {}) {
-    let templateObj;
-
-    if (typeof template === 'string') {
-      templateObj = this.getTemplate(template);
-    } else if (typeof template === 'object' && template !== null) {
-      if (!isValidTemplate(template)) {
-        throw new Error('Invalid template object provided');
-      }
-      templateObj = template;
-    } else {
-      throw new Error('Template must be a registered template ID or a template object');
-    }
+  async generatePDFWithMetadata({ template, data = {}, metadata = {}, validate = true } = {}) {
+    const templateObj = resolveTemplate(this, template);
+    if (!isRecord(metadata)) throw new Error('Metadata must be an object');
 
     if (validate) {
       const validation = validateDataAgainstTemplate(templateObj, data);
@@ -321,8 +313,71 @@ export class DocugenEngine {
     return generatePdf({
       template: templateObj,
       data,
+      metadata,
       timeout: this.timeout,
     });
+  }
+
+  /**
+   * Genera un lote de PDFs y conserva los resultados exitosos aunque falle algún registro.
+   * @param {object} options - Opciones de generación por lote
+   * @param {string|object} options.template - ID registrado u objeto de plantilla
+   * @param {object[]} options.documents - Registros { id?, data, metadata? }, máximo 100
+   * @param {object} options.metadata - Metadatos de documento usados como valor predeterminado
+   * @param {boolean} options.validate - Validar datos antes de generar cada PDF
+   * @returns {Promise<object>} Resultados individuales y conteos del lote
+   */
+  async generatePDFs({
+    template,
+    documents,
+    metadata = {},
+    validate = true,
+  } = {}) {
+    const templateObj = resolveTemplate(this, template);
+    if (!Array.isArray(documents) || documents.length === 0) {
+      throw new Error('Documents must be a non-empty array');
+    }
+    if (documents.length > 100) throw new Error('A batch cannot contain more than 100 documents');
+    if (!isRecord(metadata)) throw new Error('Metadata must be an object');
+
+    const results = [];
+    for (const [index, document] of documents.entries()) {
+      const item = isRecord(document) ? document : {};
+      const result = { index, id: item.id ?? null };
+
+      try {
+        if (!isRecord(document)) throw new Error('Each document must be an object');
+        const documentMetadata = item.metadata ?? metadata;
+        if (!isRecord(documentMetadata)) throw new Error('Document metadata must be an object');
+        const generated = await this.generatePDFWithMetadata({
+          template: templateObj,
+          data: item.data ?? {},
+          metadata: documentMetadata,
+          validate,
+        });
+        results.push({
+          ...result,
+          success: true,
+          ...generated,
+        });
+      } catch (error) {
+        results.push({
+          ...result,
+          success: false,
+          error: error?.message || String(error),
+        });
+      }
+    }
+
+    const succeeded = results.filter((result) => result.success).length;
+    return {
+      templateName: templateObj.name || 'Untitled',
+      total: results.length,
+      succeeded,
+      failed: results.length - succeeded,
+      results,
+      generatedAt: new Date().toISOString(),
+    };
   }
 
   /**
@@ -360,6 +415,8 @@ export class DocugenEngine {
         'Dynamic parameter extraction',
         'Data validation',
         'PDF generation with 17 element types',
+        'Batch PDF generation with partial results',
+        'PDF document metadata',
         'External resource handling (images, QR codes)',
         'Metadata tracking',
       ],

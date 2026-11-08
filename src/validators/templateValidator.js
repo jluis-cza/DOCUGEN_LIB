@@ -7,6 +7,9 @@ import { SCHEMA_VERSION, SUPPORTED_ELEMENT_TYPES, ERROR_CODES, IMAGE_CONFIG } fr
 import { isValidTemplateStructure, getMissingKeys } from '../utils/helpers.js';
 import { decodeImageDataUri } from '../utils/images.js';
 
+const MIN_PAGE_DIMENSION_PX = 100;
+const MAX_PAGE_DIMENSION_PX = 5000;
+
 /**
  * Valida que una plantilla tenga la estructura básica requerida
  * @param {object} template - Plantilla a validar
@@ -37,11 +40,17 @@ export const validateTemplateStructure = (template) => {
     if (typeof template.dimensions !== 'object') {
       errors.push('Dimensions must be an object');
     } else {
-      if (typeof template.dimensions.width !== 'number' || template.dimensions.width <= 0) {
-        errors.push('Dimensions width must be a positive number');
-      }
-      if (typeof template.dimensions.height !== 'number' || template.dimensions.height <= 0) {
-        errors.push('Dimensions height must be a positive number');
+      for (const dimension of ['width', 'height']) {
+        const value = Number(template.dimensions[dimension]);
+        if (
+          !Number.isInteger(value) ||
+          value < MIN_PAGE_DIMENSION_PX ||
+          value > MAX_PAGE_DIMENSION_PX
+        ) {
+          errors.push(
+            `Dimensions ${dimension} must be an integer between ${MIN_PAGE_DIMENSION_PX} and ${MAX_PAGE_DIMENSION_PX} pixels`
+          );
+        }
       }
     }
   }
@@ -210,8 +219,8 @@ export const validateTemplate = (template, options = {}) => {
       errors.push('Template page margins must be an object');
     } else if (margin) {
       const values = ['top', 'right', 'bottom', 'left'].map((side) => Number(margin[side] ?? 40));
-      if (values.some((value) => !Number.isFinite(value) || value < 0)) {
-        errors.push('Template page margins must be non-negative numbers');
+      if (values.some((value) => !Number.isInteger(value) || value < 0)) {
+        errors.push('Template page margins must be non-negative integers');
       } else if (
         template.dimensions &&
         (values[1] + values[3] >= template.dimensions.width ||
